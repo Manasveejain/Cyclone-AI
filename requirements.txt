@@ -6,3 +6,4 @@ torchvision
 pillow==12.3.0
 pandas
 numpy
+matplotlib

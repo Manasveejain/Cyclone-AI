@@ -5,9 +5,9 @@ import Predict from './pages/Predict.jsx'
 import './App.css'
 
 const TABS = [
-  { id: 'dashboard', label: '📊 Dashboard' },
-  { id: 'tracks',    label: '🌀 Cyclone Tracks' },
-  { id: 'predict',   label: '🛰️ AI Predict' },
+  { id: 'dashboard', label: 'Dashboard' },
+  { id: 'tracks',    label: 'Cyclone Tracks' },
+  { id: 'predict',   label: 'AI Predict' },
 ]
 
 export default function App() {

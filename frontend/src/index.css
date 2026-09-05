@@ -1,14 +1,29 @@
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
 :root {
-  --bg: #0a0f1e;
-  --surface: #111827;
-  --surface2: #1f2937;
-  --border: #374151;
-  --text: #f9fafb;
-  --muted: #9ca3af;
-  --accent: #3b82f6;
-  --accent2: #06b6d4;
+  /* ── Base ── */
+  --bg:       #07090f;
+  --surface:  #0e1420;
+  --surface2: #161e30;
+  --surface3: #1c2640;
+  --border:   #253050;
+  --border2:  #1a2240;
+
+  /* ── Text ── */
+  --text:     #e8edf8;
+  --muted:    #6b7a99;
+  --muted2:   #8a9bbf;
+
+  /* ── Accent — single teal/cyan family ── */
+  --accent:      #0ea5e9;   /* primary interactive blue */
+  --accent-dim:  #0369a1;   /* pressed / active bg */
+  --accent-glow: rgba(14, 165, 233, 0.15);
+
+  /* ── Highlight — amber, used sparingly ── */
+  --hi:      #f59e0b;
+  --hi-dim:  #92400e;
+
+  /* ── Intensity colors live in src/colors.js ── */
 }
 
 body {
@@ -18,8 +33,9 @@ body {
   min-height: 100vh;
 }
 
-::-webkit-scrollbar { width: 6px; }
+::-webkit-scrollbar { width: 5px; }
 ::-webkit-scrollbar-track { background: var(--surface); }
 ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: var(--accent-dim); }
 
-.leaflet-container { background: #0d1a2e !important; }
+.leaflet-container { background: #060b15 !important; }

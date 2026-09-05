@@ -2,7 +2,7 @@
 
 AI-powered cyclone intensity prediction and track visualization for the **North Indian Ocean** basin, built for a hackathon.
 
-It combines a **ResNet-18 deep learning model** for satellite image inference with a **FastAPI backend** and a **React + Leaflet frontend** powered by real IBTrACS storm data.
+Combines a **ResNet-18 deep learning model** for satellite image inference with a **FastAPI backend** and a **React + Leaflet frontend** driven by real IBTrACS storm data.
 
 ---
 
@@ -18,9 +18,9 @@ It combines a **ResNet-18 deep learning model** for satellite image inference wi
 
 | Layer | Technology |
 |---|---|
-| ML Model | PyTorch · ResNet-18 (fine-tuned regression head) |
+| ML Model | PyTorch · ResNet-18 (regression head) |
 | Backend | FastAPI · Uvicorn |
-| Data | IBTrACS v04r01 (North Indian Ocean, 2020+) |
+| Data | IBTrACS v04r01 (North Indian Ocean, 2000+) |
 | Frontend | React 18 · Vite · Leaflet / react-leaflet · Recharts |
 
 ---
@@ -30,21 +30,25 @@ It combines a **ResNet-18 deep learning model** for satellite image inference wi
 ```
 Cyclone-AI/
 ├── backend/
-│   └── main.py              # FastAPI app — all REST endpoints
+│   └── main.py                      # FastAPI app — all REST endpoints
 ├── frontend/
 │   ├── src/
-│   │   ├── App.jsx           # Tab navigation shell
+│   │   ├── App.jsx                  # Tab navigation shell
+│   │   ├── colors.js                # Shared intensity color palette
 │   │   └── pages/
-│   │       ├── Dashboard.jsx # Stats cards + charts + storm table
-│   │       ├── TrackView.jsx # Interactive map + wind chart
-│   │       └── Predict.jsx   # Image upload + AI inference UI
+│   │       ├── Dashboard.jsx        # Stats cards + charts + storm table
+│   │       ├── TrackView.jsx        # Interactive map + wind chart
+│   │       └── Predict.jsx          # Image upload + AI inference UI
 │   ├── package.json
 │   └── vite.config.js
-├── model.py                 # CNN + LSTM definitions, IBTrACS ingestion, inference pipeline
-├── demo_cyclones.csv        # Pre-filtered NI basin data (generated from IBTrACS)
-├── mock_cyclone_frames/     # Sample satellite images for testing (c1–c5.jpeg)
+├── model.py                         # CNN definition, IBTrACS ingestion, inference pipeline
+├── demo_cyclones.csv                # Pre-filtered NI basin data (generated from IBTrACS)
+├── mock_cyclone_frames/             # Sample satellite images for testing
+├── outputs/
+│   ├── cyclone_cnn_best.pth         # Best model weights from training
+│   └── predicted_vs_actual.png      # Validation plot
 ├── requirements.txt
-└── ibtracs.ALL.list.v04r01.csv  # ⚠ NOT in repo (316 MB) — download separately
+└── ibtracs.NI.list.v04r01.csv       # ⚠ NOT in repo — download separately
 ```
 
 ---
@@ -65,17 +69,17 @@ cd Cyclone-AI
 
 ### 2. (Optional) Download IBTrACS data
 
-The master dataset is too large for GitHub. If you want to regenerate `demo_cyclones.csv`:
+The master dataset is not included in the repo. If you need to regenerate `demo_cyclones.csv`:
 
-1. Download `ibtracs.ALL.list.v04r01.csv` from [NOAA IBTrACS](https://www.ncei.noaa.gov/products/international-best-track-archive)
+1. Download `ibtracs.NI.list.v04r01.csv` from [NOAA IBTrACS](https://www.ncei.noaa.gov/products/international-best-track-archive) (North Indian Ocean basin file)
 2. Place it in the project root
 3. Run:
    ```bash
-   python model.py
+   python -c "from model import prepare_ibtracs_dataset; prepare_ibtracs_dataset()"
    ```
-   This filters the North Indian Ocean basin (2020+) and writes `demo_cyclones.csv`.
+   This filters the NI basin (year 2000+) and writes `demo_cyclones.csv`.
 
-> `demo_cyclones.csv` is already committed, so this step is only needed if you want fresher or different data.
+> `demo_cyclones.csv` is already committed, so this step is only needed if you want to refresh the data.
 
 ### 3. Set up the Python backend
 
@@ -94,7 +98,7 @@ Start the API server:
 uvicorn backend.main:app --reload --port 8000
 ```
 
-The API will be live at `http://localhost:8000`. Interactive docs at `http://localhost:8000/docs`.
+API live at `http://localhost:8000` · Interactive docs at `http://localhost:8000/docs`
 
 ### 4. Set up the frontend
 
@@ -137,17 +141,35 @@ Open `http://localhost:5173` in your browser.
 ## ML Architecture
 
 **CycloneIntensityCNN** — ResNet-18 backbone with a custom regression head:
+
 ```
-ResNet-18 (pretrained) → Linear(512, 128) → ReLU → Dropout(0.3) → Linear(128, 1)
+ResNet-18 (pretrained ImageNet) → GlobalAvgPool
+  → Linear(512, 128) → ReLU → Dropout(0.3) → Linear(128, 1)
 ```
+
 Output: continuous wind speed in knots.
 
-**CycloneTrajectoryLSTM** — 2-layer LSTM for 24-hour track forecasting:
-```
-Input(lat, lon, wind) → LSTM(64 hidden, 2 layers) → Linear(64, 2) → (ΔLat, ΔLon)
+The first conv layer is extended to accept 4-channel satellite input (IR, WV, PMW, VIS) when training on TCIR data, or 3-channel RGB when running inference on standard satellite images.
+
+> Model runs in demo mode (random weights) unless a `.pth` file is provided. Pass your own weights via the `model_weights_path` argument in `run_inference_pipeline()`.
+
+---
+
+## Training (Optional)
+
+To train on synthetic data (no downloads needed):
+
+```bash
+python model.py --synthetic --epochs 10
 ```
 
-> The model runs without pre-trained weights (random init) for the hackathon demo. Swap in your own `.pth` file via the `model_weights_path` argument in `run_inference_pipeline()`.
+To train on real TCIR data:
+
+```bash
+python model.py --data_path TCIR-ALL_2017.h5 --epochs 30
+```
+
+Weights are saved to `outputs/cyclone_cnn_best.pth` and a prediction plot to `outputs/predicted_vs_actual.png`.
 
 ---
 

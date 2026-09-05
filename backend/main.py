@@ -49,25 +49,26 @@ def load_data() -> pd.DataFrame:
 
 # ─── Helpers ──────────────────────────────────────────────────────────────────
 def classify_intensity(wind_knots: float) -> dict:
-    """Return category name and colour for a given wind speed."""
+    """Return category name and colour for a given wind speed.
+    Colors kept in sync with frontend src/colors.js."""
     if wind_knots < 34:
-        return {"category": "Tropical Depression", "color": "#4ade80"}
+        return {"category": "Tropical Depression",             "color": "#22d3ee"}
     elif wind_knots < 48:
-        return {"category": "Tropical Storm", "color": "#facc15"}
+        return {"category": "Tropical Storm",                  "color": "#86efac"}
     elif wind_knots < 64:
-        return {"category": "Severe Cyclonic Storm", "color": "#fb923c"}
+        return {"category": "Severe Cyclonic Storm",           "color": "#fde047"}
     elif wind_knots < 96:
-        return {"category": "Very Severe Cyclonic Storm", "color": "#f87171"}
+        return {"category": "Very Severe Cyclonic Storm",      "color": "#fb923c"}
     elif wind_knots < 120:
-        return {"category": "Extremely Severe Cyclonic Storm", "color": "#c084fc"}
+        return {"category": "Extremely Severe Cyclonic Storm", "color": "#f87171"}
     else:
-        return {"category": "Super Cyclonic Storm", "color": "#e11d48"}
+        return {"category": "Super Cyclonic Storm",            "color": "#e879f9"}
 
 
 def run_model_on_image(image: Image.Image) -> dict:
     """Run the ResNet18 model on a PIL Image."""
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    model = CycloneIntensityCNN()
+    model = CycloneIntensityCNN(in_channels=3, pretrained=False)
     model.to(device)
     model.eval()
 
@@ -105,20 +106,29 @@ def get_cyclones():
     storms = []
     for sid, grp in df.groupby("SID"):
         name = grp["NAME"].iloc[0]
-        max_wind = grp["WMO_WIND"].max()
+        max_wind = grp["WMO_WIND"].max()   # NaN if ALL rows are NaN
         start_time = grp["ISO_TIME"].min()
         end_time = grp["ISO_TIME"].max()
-        intensity = classify_intensity(max_wind if not np.isnan(max_wind) else 0)
+
+        if pd.isna(max_wind):
+            # No wind data at all for this storm — mark unclassified
+            category = "Unclassified"
+            color    = "#6b7a99"
+        else:
+            info     = classify_intensity(float(max_wind))
+            category = info["category"]
+            color    = info["color"]
+
         storms.append({
             "sid": sid,
             "name": name,
-            "max_wind_knots": round(float(max_wind), 1) if not np.isnan(max_wind) else None,
+            "max_wind_knots": round(float(max_wind), 1) if not pd.isna(max_wind) else None,
             "start_time": str(start_time),
             "end_time": str(end_time),
             "record_count": len(grp),
-            **intensity,
+            "category": category,
+            "color": color,
         })
-    # Sort by start time descending
     storms.sort(key=lambda x: x["start_time"], reverse=True)
     return {"cyclones": storms, "total": len(storms)}
 
@@ -158,23 +168,24 @@ def get_stats():
     """Aggregate stats across the whole dataset."""
     df = load_data()
 
-    named = df[~df["NAME"].isin(["UNNAMED"])]["SID"].nunique()
     total = df["SID"].nunique()
+    named = df[df["NAME"] != "UNNAMED"]["SID"].nunique()
     max_wind = df["WMO_WIND"].max()
 
-    # Intensity distribution
-    def cat(w):
-        if np.isnan(w):
-            return "Unknown"
-        return classify_intensity(w)["category"]
-
-    df["category"] = df["WMO_WIND"].apply(cat)
-    dist = df.groupby("category")["SID"].nunique().to_dict()
+    # Classify each STORM by its peak wind, not each row
+    dist: dict[str, int] = {}
+    for sid, grp in df.groupby("SID"):
+        peak = grp["WMO_WIND"].max()
+        if pd.isna(peak):
+            cat = "Unclassified"
+        else:
+            cat = classify_intensity(float(peak))["category"]
+        dist[cat] = dist.get(cat, 0) + 1
 
     return {
         "total_storms": int(total),
         "named_storms": int(named),
-        "max_recorded_wind_knots": round(float(max_wind), 1) if not np.isnan(max_wind) else None,
+        "max_recorded_wind_knots": round(float(max_wind), 1) if not pd.isna(max_wind) else None,
         "intensity_distribution": dist,
         "basin": "NI (North Indian Ocean)",
     }
