@@ -1,5 +1,7 @@
 # Large data files
 ibtracs.NI.list.v04r01.csv
+TCIR-CPAC_IO_SH.h5
+cyclone_cnn_best.pth
 
 # Python
 __pycache__/
