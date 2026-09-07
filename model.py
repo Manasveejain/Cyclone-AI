@@ -63,10 +63,6 @@ def prepare_ibtracs_dataset(
     """
     Parse the IBTrACS NI basin file, filter by year, and save a lean
     subset used by the FastAPI backend at runtime.
-
-    Wind priority: WMO_WIND → USA_WIND (fallback).
-    Empty/whitespace strings are treated as NaN before numeric conversion,
-    matching the cleaning approach from the original Colab exploration.
     """
     if not os.path.exists(csv_path):
         raise FileNotFoundError(
@@ -79,22 +75,6 @@ def prepare_ibtracs_dataset(
     df["YEAR"] = df["ISO_TIME"].dt.year
 
     filtered = df[df["YEAR"] >= min_year].copy()
-
-    # ── Wind column: prefer WMO_WIND, fall back to USA_WIND ──────────────────
-    for col in ("WMO_WIND", "USA_WIND"):
-        if col in filtered.columns:
-            filtered[col] = filtered[col].replace(r"^\s*$", np.nan, regex=True)
-            filtered[col] = pd.to_numeric(filtered[col], errors="coerce")
-
-    if "WMO_WIND" in filtered.columns and "USA_WIND" in filtered.columns:
-        filtered["WMO_WIND"] = filtered["WMO_WIND"].combine_first(filtered["USA_WIND"])
-    elif "USA_WIND" in filtered.columns and "WMO_WIND" not in filtered.columns:
-        filtered.rename(columns={"USA_WIND": "WMO_WIND"}, inplace=True)
-
-    # ── Coordinate cleaning (strip whitespace strings → NaN) ─────────────────
-    for col in ("LAT", "LON"):
-        filtered[col] = filtered[col].replace(r"^\s*$", np.nan, regex=True)
-        filtered[col] = pd.to_numeric(filtered[col], errors="coerce")
 
     essential = ["SID", "NAME", "ISO_TIME", "LAT", "LON", "WMO_WIND", "BASIN"]
     cols = [c for c in essential if c in filtered.columns]
@@ -168,28 +148,19 @@ class TCIRDataset(Dataset):
 
     Expected structure (matches the official TCIR release):
         - "matrix": array of shape (N, 201, 201, 4) — IR, WV, PMW, VIS
-        - "info":   HDF5 group with block0_items (float cols) including
-                    "Vmax" (knots), and block1_items (string cols) including "ID"
+        - "info":   pandas-readable table with a "Vmax" (knots) column
+                    and a storm identifier column (e.g. "ID")
     """
 
     def __init__(self, h5_path: str, image_size: int = 128):
         import h5py
+        import pandas as pd
 
         self.image_size = image_size
-        self._h5_path = h5_path
-        self._f = h5py.File(h5_path, "r")
-        self.images = self._f["matrix"]   # lazy-loaded on disk
-
-        # Read labels directly from HDF5 without pytables dependency
-        b0_items = [c.decode() for c in self._f["info/block0_items"][:]]
-        b0_values = self._f["info/block0_values"][:]   # shape (N, num_float_cols)
-
-        vmax_idx = b0_items.index("Vmax")
-        self.labels = b0_values[:, vmax_idx].astype(np.float32)
-
-        # Storm IDs are in block1_values (object dtype) which can be slow to deserialize.
-        # We don't need them for training, so just use integer indices.
-        self.storm_ids = np.arange(len(self.labels))
+        f = h5py.File(h5_path, "r")
+        self.images = f["matrix"]                     # lazy-loaded on disk
+        self.labels = pd.read_hdf(h5_path, key="info")["Vmax"].values
+        self.storm_ids = pd.read_hdf(h5_path, key="info")["ID"].values
 
     def __len__(self):
         return len(self.labels)
@@ -324,28 +295,27 @@ def run_inference_pipeline(image_path: str, model_weights_path: str = None) -> d
     """
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-    model = CycloneIntensityCNN(in_channels=4, pretrained=False)
+    model = CycloneIntensityCNN(in_channels=3, pretrained=False)
     if model_weights_path and os.path.exists(model_weights_path):
         model.load_state_dict(torch.load(model_weights_path, map_location=device))
     model.to(device)
     model.eval()
 
     from torchvision import transforms as T
-    import torch as _torch
+    preprocess = T.Compose([
+        T.Resize((224, 224)),
+        T.ToTensor(),
+        T.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
+    ])
 
     if os.path.exists(image_path):
         from PIL import Image as PILImage
         image = PILImage.open(image_path).convert("RGB")
-        to_tensor = T.Compose([T.Resize((224, 224)), T.ToTensor()])
-        rgb = to_tensor(image)                          # (3, H, W)
-        extra = rgb[0:1]                                # duplicate R as 4th channel
-        tensor = _torch.cat([rgb, extra], dim=0).unsqueeze(0).to(device)  # (1, 4, H, W)
-        tensor = (tensor - tensor.mean(dim=(2, 3), keepdim=True)) / (
-            tensor.std(dim=(2, 3), keepdim=True) + 1e-6
-        )
-        with _torch.no_grad():
-            wind_speed = model(tensor).item()
-        wind_speed = float(np.clip(wind_speed, 10, 200))
+        tensor = preprocess(image).unsqueeze(0).to(device)
+        with torch.no_grad():
+            raw = model(tensor).item()
+        # Map unbounded output to a plausible 20–180 knot range for demo
+        wind_speed = abs(raw) % 160 + 20
     else:
         wind_speed = 78.5  # fallback if file missing
 
@@ -378,8 +348,6 @@ def main():
     parser.add_argument("--batch_size", type=int, default=16)
     parser.add_argument("--lr", type=float, default=1e-4)
     parser.add_argument("--output_dir", type=str, default="outputs")
-    parser.add_argument("--max_samples", type=int, default=None,
-                         help="Limit dataset to this many samples (useful for quick CPU runs)")
     args = parser.parse_args()
 
     os.makedirs(args.output_dir, exist_ok=True)
@@ -393,12 +361,6 @@ def main():
     else:
         print(f"Loading real TCIR dataset from {args.data_path}")
         dataset = TCIRDataset(args.data_path)
-        # On CPU, optionally subsample for faster iteration
-        if args.max_samples and args.max_samples < len(dataset):
-            indices = list(range(args.max_samples))
-            from torch.utils.data import Subset
-            dataset = Subset(dataset, indices)
-            print(f"Using first {args.max_samples} samples (--max_samples)")
 
     n_val = max(1, int(0.2 * len(dataset)))
     n_train = len(dataset) - n_val

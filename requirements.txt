@@ -7,7 +7,3 @@ pillow==12.3.0
 pandas
 numpy
 matplotlib
-seaborn
-h5py
-streamlit>=1.35.0
-plotly>=5.20.0
